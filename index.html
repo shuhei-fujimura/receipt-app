@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -7,10 +8,12 @@
     <meta name="description" content="レシートを撮影・アップロードして経費を自動管理。確定申告に便利なCSV出力機能付き。">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
+
 <body>
     <div class="app-container">
         <!-- Header -->
@@ -133,6 +136,17 @@
                             </button>
                         </div>
                     </div>
+                    <!-- Sync Section -->
+                    <div class="sync-section">
+                        <span class="sync-label">📱💻 デバイス間同期:</span>
+                        <button class="btn btn-outline btn-sm" id="export-json-btn">
+                            ⬆️ エクスポート
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="import-json-btn">
+                            ⬇️ インポート
+                        </button>
+                        <input type="file" id="import-json-input" accept=".json" hidden>
+                    </div>
                     <div class="filter-bar">
                         <select id="filter-month">
                             <option value="">全期間</option>
@@ -206,4 +220,5 @@
 
     <script src="app.js"></script>
 </body>
+
 </html>

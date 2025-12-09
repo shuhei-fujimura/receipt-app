@@ -33,7 +33,7 @@ class ReceiptManager {
         // Update active tab button
         document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
         document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-        
+
         // Update active section
         document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
         document.getElementById(`${tabName}-section`).classList.add('active');
@@ -119,12 +119,12 @@ class ReceiptManager {
 
     async runOCR(imageData) {
         const worker = await Tesseract.createWorker('jpn+eng');
-        
+
         try {
             const result = await worker.recognize(imageData);
             const text = result.data.text;
             console.log('OCR Result:', text);
-            
+
             // Extract data from OCR text
             const extractedData = this.extractDataFromText(text);
             this.showForm(extractedData);
@@ -135,7 +135,7 @@ class ReceiptManager {
 
     extractDataFromText(text) {
         const data = {};
-        
+
         // Extract date patterns: YYYY/MM/DD, YYYY-MM-DD, YYYY年MM月DD日, etc.
         const datePatterns = [
             /(\d{4})[\/\-年](\d{1,2})[\/\-月](\d{1,2})/,
@@ -143,7 +143,7 @@ class ReceiptManager {
             /R(\d{1,2})\.(\d{1,2})\.(\d{1,2})/,
             /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/
         ];
-        
+
         for (const pattern of datePatterns) {
             const match = text.match(pattern);
             if (match) {
@@ -175,7 +175,7 @@ class ReceiptManager {
             /([0-9,]+)\s*円/,
             /(?:TOTAL|Total|total)[^\d]*([0-9,]+)/
         ];
-        
+
         for (const pattern of amountPatterns) {
             const matches = text.match(new RegExp(pattern, 'g'));
             if (matches) {
@@ -233,12 +233,17 @@ class ReceiptManager {
         document.getElementById('ocr-status').style.display = 'none';
         document.getElementById('form-card').style.display = 'block';
 
-        // Set form values
-        document.getElementById('expense-date').value = data.date || new Date().toISOString().split('T')[0];
+        // Set form values - use OCR date if available, otherwise leave empty for user to fill
+        document.getElementById('expense-date').value = data.date || '';
         document.getElementById('expense-amount').value = data.amount || '';
         document.getElementById('expense-vendor').value = data.vendor || '';
         document.getElementById('expense-category').value = data.category || '';
         document.getElementById('expense-memo').value = '';
+
+        // Show hint if date was not extracted
+        if (!data.date) {
+            this.showToast('日付を読み取れませんでした。手動で入力してください。', 'error');
+        }
     }
 
     // ===== Form Handling =====
@@ -344,7 +349,7 @@ class ReceiptManager {
 
         // Get unique categories
         const categories = new Set(this.expenses.map(e => e.category).filter(c => c));
-        
+
         const currentCategory = filterCategory.value;
         filterCategory.innerHTML = '<option value="">全カテゴリ</option>';
         categories.forEach(cat => {
@@ -379,7 +384,7 @@ class ReceiptManager {
         const filteredTotal = document.getElementById('filtered-total');
 
         const filtered = this.getFilteredExpenses();
-        
+
         if (filtered.length === 0) {
             table.style.display = 'none';
             emptyState.classList.add('show');
@@ -433,14 +438,14 @@ class ReceiptManager {
             const dates = this.expenses.map(e => new Date(e.date));
             const minDate = new Date(Math.min(...dates));
             const maxDate = new Date(Math.max(...dates));
-            document.getElementById('summary-period').textContent = 
+            document.getElementById('summary-period').textContent =
                 `${minDate.getFullYear()}年${minDate.getMonth() + 1}月〜${maxDate.getFullYear()}年${maxDate.getMonth() + 1}月`;
         }
     }
 
     renderMonthlyChart() {
         const container = document.getElementById('monthly-chart');
-        
+
         // Group by month
         const monthlyData = {};
         this.expenses.forEach(e => {
@@ -476,7 +481,7 @@ class ReceiptManager {
 
     renderCategoryList() {
         const container = document.getElementById('category-list');
-        
+
         // Group by category
         const categoryData = {};
         this.expenses.forEach(e => {
@@ -505,6 +510,19 @@ class ReceiptManager {
         document.getElementById('export-csv-btn').addEventListener('click', () => {
             this.exportCSV();
         });
+
+        // JSON export/import for device sync
+        document.getElementById('export-json-btn').addEventListener('click', () => {
+            this.exportJSON();
+        });
+
+        document.getElementById('import-json-btn').addEventListener('click', () => {
+            document.getElementById('import-json-input').click();
+        });
+
+        document.getElementById('import-json-input').addEventListener('change', (e) => {
+            this.importJSON(e);
+        });
     }
 
     exportCSV() {
@@ -527,7 +545,7 @@ class ReceiptManager {
         // Add BOM for Excel compatibility
         let csvContent = '\uFEFF';
         csvContent += headers.join(',') + '\n';
-        csvContent += rows.map(row => 
+        csvContent += rows.map(row =>
             row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
         ).join('\n');
 
@@ -543,12 +561,78 @@ class ReceiptManager {
         this.showToast('CSVをダウンロードしました！', 'success');
     }
 
+    // JSON export for device sync
+    exportJSON() {
+        if (this.expenses.length === 0) {
+            this.showToast('エクスポートするデータがありません', 'error');
+            return;
+        }
+
+        const dataToExport = {
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            expenses: this.expenses.map(e => ({
+                ...e,
+                imageData: null // Don't include images to keep file small
+            }))
+        };
+
+        const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `経費データ_${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+
+        this.showToast('JSONをダウンロードしました！Googleドライブに保存してください。', 'success');
+    }
+
+    // JSON import for device sync
+    importJSON(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+
+                if (!data.expenses || !Array.isArray(data.expenses)) {
+                    throw new Error('Invalid format');
+                }
+
+                // Merge with existing data (avoid duplicates by ID)
+                const existingIds = new Set(this.expenses.map(exp => exp.id));
+                let importedCount = 0;
+
+                data.expenses.forEach(exp => {
+                    if (!existingIds.has(exp.id)) {
+                        this.expenses.push(exp);
+                        importedCount++;
+                    }
+                });
+
+                this.saveToStorage();
+                this.renderList();
+                this.renderSummary();
+
+                this.showToast(`${importedCount}件の経費をインポートしました！`, 'success');
+            } catch (error) {
+                console.error('Import error:', error);
+                this.showToast('ファイルの読み込みに失敗しました', 'error');
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = ''; // Reset input
+    }
+
     // ===== Toast =====
     showToast(message, type = 'success') {
         const toast = document.getElementById('toast');
         toast.querySelector('.toast-message').textContent = message;
         toast.className = `toast ${type} show`;
-        
+
         setTimeout(() => {
             toast.classList.remove('show');
         }, 3000);

@@ -138,69 +138,58 @@ class ReceiptManager {
 
         console.log('OCR Text for parsing:', text); // デバッグ用
 
-        // テキストを正規化（全角数字を半角に変換）
-        const normalizedText = text
-            .replace(/０/g, '0').replace(/１/g, '1').replace(/２/g, '2')
-            .replace(/３/g, '3').replace(/４/g, '4').replace(/５/g, '5')
-            .replace(/６/g, '6').replace(/７/g, '7').replace(/８/g, '8')
-            .replace(/９/g, '9');
+        // テキストを正規化（全角数字を半角に、スペースを除去して処理しやすくする）
+        // ただし、金額や日付の区切りとしてのスペースは保持したいので、行ごとの処理も併用する
+        const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
-        // Extract date patterns: 様々な日付形式に対応
+        // 全角数字変換用関数
+        const toHalfWidth = (str) => {
+            return str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+        };
+
+        const normalizedText = toHalfWidth(text);
+
+        // ==========================================
+        // 1. 日付の抽出 (Date Extraction)
+        // ==========================================
+        // スペース許容型の日付パターン
         const datePatterns = [
-            // 2024年12月10日, 2024年12月10日
-            { regex: /(\d{4})年(\d{1,2})月(\d{1,2})日?/, type: 'ymd' },
-            // 2024/12/10, 2024-12-10
-            { regex: /(\d{4})[\/\-\.年](\d{1,2})[\/\-\.月](\d{1,2})/, type: 'ymd' },
-            // 令和6年12月10日, 令和06年12月10日
-            { regex: /令和(\d{1,2})年(\d{1,2})月(\d{1,2})日?/, type: 'reiwa' },
-            // R6.12.10, R06.12.10, R6/12/10
-            { regex: /R(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{1,2})/, type: 'reiwa' },
-            // 24/12/10 (年が2桁の場合)
-            { regex: /(\d{2})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/, type: 'short_year' },
-            // 12/10/2024 (月/日/年形式)
-            { regex: /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/, type: 'mdy' },
-            // 12月10日 (年なし - 今年と仮定)
-            { regex: /(\d{1,2})月(\d{1,2})日/, type: 'md_only' }
+            // 2024年12月10日 (スペース許容: 2 0 2 4 年 ...)
+            { regex: /(\d[\s\d]{3})\s*年\s*(\d[\s\d]{0,2})\s*月\s*(\d[\s\d]{0,2})\s*日?/, type: 'ymd' },
+            // 2024/12/10, 2024-12/10
+            { regex: /(\d[\s\d]{3})[\/\-\.．]\s*(\d[\s\d]{0,2})[\/\-\.．]\s*(\d[\s\d]{0,2})/, type: 'ymd' },
+            // 令和6年12月10日
+            { regex: /令\s*和\s*(\d[\s\d]{0,2})\s*年\s*(\d[\s\d]{0,2})\s*月\s*(\d[\s\d]{0,2})\s*日?/, type: 'reiwa' },
+            // R6.12.10
+            { regex: /R\s*(\d[\s\d]{0,2})[\.\/\-]\s*(\d[\s\d]{0,2})[\.\/\-]\s*(\d[\s\d]{0,2})/, type: 'reiwa' }
         ];
 
         for (const { regex, type } of datePatterns) {
             const match = normalizedText.match(regex);
             if (match) {
+                // 数字の中のスペースを除去してパース
+                const p1 = parseInt(match[1].replace(/\s/g, ''));
+                const p2 = parseInt(match[2].replace(/\s/g, ''));
+                const p3 = parseInt(match[3].replace(/\s/g, ''));
+
                 let year, month, day;
 
                 switch (type) {
                     case 'ymd':
-                        year = parseInt(match[1]);
-                        month = parseInt(match[2]);
-                        day = parseInt(match[3]);
+                        year = p1;
+                        month = p2;
+                        day = p3;
                         break;
                     case 'reiwa':
-                        // 令和年を西暦に変換（令和1年=2019年）
-                        year = 2018 + parseInt(match[1]);
-                        month = parseInt(match[2]);
-                        day = parseInt(match[3]);
-                        break;
-                    case 'short_year':
-                        // 2桁の年を4桁に変換
-                        const shortYear = parseInt(match[1]);
-                        year = shortYear >= 50 ? 1900 + shortYear : 2000 + shortYear;
-                        month = parseInt(match[2]);
-                        day = parseInt(match[3]);
-                        break;
-                    case 'mdy':
-                        month = parseInt(match[1]);
-                        day = parseInt(match[2]);
-                        year = parseInt(match[3]);
-                        break;
-                    case 'md_only':
-                        // 年がない場合は今年と仮定
-                        year = new Date().getFullYear();
-                        month = parseInt(match[1]);
-                        day = parseInt(match[2]);
+                        year = 2018 + p1;
+                        month = p2;
+                        day = p3;
                         break;
                 }
 
-                // 日付の妥当性チェック
+                // 妥当性チェック (2000年〜2100年)
+                if (year < 100 && year > 0) year += 2000; // 2桁年の補正
+
                 if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && year >= 2000 && year <= 2100) {
                     data.date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                     console.log('Extracted date:', data.date);
@@ -209,53 +198,118 @@ class ReceiptManager {
             }
         }
 
-        // Extract amount patterns: ¥1,234, 1,234円, 合計 1234, etc.
-        const amountPatterns = [
-            /(?:合計|計|小計|総額|お支払|支払)[^\d]*[¥￥]?\s*([0-9,]+)/,
-            /[¥￥]\s*([0-9,]+)/,
-            /([0-9,]+)\s*円/,
-            /(?:TOTAL|Total|total)[^\d]*([0-9,]+)/
+        // ==========================================
+        // 2. 金額の抽出 (Amount Extraction)
+        // ==========================================
+        // 戦略: 「合計」などのキーワードがある行、またはその直後の行にある金額を最優先する
+        // 単に最大の数字を取ると「お預り」や「会員番号」を取ってしまうため
+
+        let foundAmount = null;
+
+        // 金額抽出用正規表現（カンマ付き数字）
+        const extractPrice = (str) => {
+            const match = str.match(/([0-9]{1,3}(?:,[0-9]{3})*)/);
+            return match ? parseInt(match[1].replace(/,/g, '')) : null;
+        };
+
+        // 優先キーワード（上から順に優先度が高い）
+        const totalKeywords = [
+            /合\s*計/i,
+            /小\s*計/i, // 税抜の場合もあるが、合計がない場合は小計を採用
+            /お\s*支\s*払\s*い/i,
+            /領\s*収/i,
+            /請\s*求/i,
+            /融\s*資/i, // 消費税等の行を除外するためのガードが必要だが、まずはポジティブワード
+            /Total/i
         ];
 
-        for (const pattern of amountPatterns) {
-            const matches = text.match(new RegExp(pattern, 'g'));
-            if (matches) {
-                // Get the largest amount (usually the total)
-                let maxAmount = 0;
-                matches.forEach(m => {
-                    const numMatch = m.match(/([0-9,]+)/);
-                    if (numMatch) {
-                        const amount = parseInt(numMatch[1].replace(/,/g, ''));
-                        if (amount > maxAmount && amount < 10000000) { // Reasonable limit
-                            maxAmount = amount;
-                        }
+        // 除外キーワード（これらを含む行の数字は合計ではない可能性が高い）
+        const excludeKeywords = [
+            /お\s*預\s*り/i,
+            /お\s*釣\s*り/i,
+            /釣\s*銭/i,
+            /対\s*象/i, // 税対象額
+            /税/i,      // 消費税額
+            /値\s*引/i  // 値引き額
+        ];
+
+        // 行ごとのスキャン
+        for (let i = 0; i < lines.length; i++) {
+            const line = toHalfWidth(lines[i]);
+
+            // 除外キーワードが含まれていたらスキップ
+            if (excludeKeywords.some(k => k.test(line))) continue;
+
+            // 合計キーワードが含まれているか確認
+            if (totalKeywords.some(k => k.test(line))) {
+                // 1. 同じ行に金額があるか？
+                let amount = extractPrice(line);
+
+                // 2. なければ次の行を見る（よくあるパターン：合計 [改行] ¥1,000）
+                if (!amount && i + 1 < lines.length) {
+                    const nextLine = toHalfWidth(lines[i + 1]);
+                    // 次の行が除外キーワードを含まない場合のみ
+                    if (!excludeKeywords.some(k => k.test(nextLine))) {
+                        amount = extractPrice(nextLine);
                     }
-                });
-                if (maxAmount > 0) {
-                    data.amount = maxAmount;
+                }
+
+                if (amount && amount > 0) {
+                    // 既存の候補より大きければ採用（小計より合計の方が大きいため）
+                    // ただし、あまりに巨大な数字（電話番号など）は除外
+                    if (!foundAmount || (amount > foundAmount && amount < 10000000)) {
+                        foundAmount = amount;
+                    }
+                }
+            }
+        }
+
+        // キーワードで見つからなかった場合、¥マークや「円」のついている最大値を探す（フォールバック）
+        if (!foundAmount) {
+            const pricePatterns = [
+                /[¥￥]\s*([0-9,]+)/g,
+                /([0-9,]+)\s*円/g
+            ];
+
+            let maxVal = 0;
+            for (const pattern of pricePatterns) {
+                const matches = normalizedText.matchAll(pattern);
+                for (const m of matches) {
+                    const val = parseInt(m[1].replace(/,/g, ''));
+                    if (val > maxVal && val < 10000000) {
+                        maxVal = val;
+                    }
+                }
+            }
+            if (maxVal > 0) foundAmount = maxVal;
+        }
+
+        if (foundAmount) {
+            data.amount = foundAmount;
+            console.log('Extracted amount:', foundAmount);
+        }
+
+        // ==========================================
+        // 3. 店舗名の抽出 (Vendor Extraction)
+        // ==========================================
+        // 最初の数行から、電話番号や日付っぽくない行を探す
+        if (lines.length > 0) {
+            for (let i = 0; i < Math.min(5, lines.length); i++) {
+                const line = lines[i].trim();
+                // 数字だけの行、短い行、日付っぽい行を除外
+                if (line.length > 2 &&
+                    !/^\d+$/.test(line) &&
+                    !/^[0-9\-\/\.\s]+$/.test(line) &&
+                    !line.includes('レシート') &&
+                    !line.includes('領収')) {
+
+                    data.vendor = line.substring(0, 50);
                     break;
                 }
             }
         }
 
-        // Extract store name (usually at the top of receipt)
-        const lines = text.split('\n').filter(line => line.trim().length > 0);
-        if (lines.length > 0) {
-            // First few lines often contain store name
-            for (let i = 0; i < Math.min(5, lines.length); i++) {
-                const line = lines[i].trim();
-                // Skip lines that are mostly numbers or very short
-                if (line.length > 2 && !/^\d+$/.test(line) && !/^[0-9\-\/]+$/.test(line)) {
-                    // Skip common header patterns
-                    if (!line.match(/^(領収|レシート|伝票|TEL|電話|〒)/)) {
-                        data.vendor = line.substring(0, 50); // Limit length
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Try to auto-detect category from keywords
+        // カテゴリ推定は既存ロジック維持
         const textLower = text.toLowerCase();
         if (textLower.includes('ガソリン') || textLower.includes('給油') || textLower.includes('燃料')) {
             data.category = 'ガソリン代';

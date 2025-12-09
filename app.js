@@ -531,16 +531,33 @@ class ReceiptManager {
             return;
         }
 
-        const headers = ['日付', '経費項目', '店舗・相手先', '金額', 'メモ'];
+        // やよいの青色申告オンライン形式
+        // 必須項目: 日付, 入金, 出金
+        // 経費なので「出金」に金額を入れる
+        const headers = ['日付', '入金', '出金', '摘要'];
         const rows = this.expenses
             .sort((a, b) => new Date(a.date) - new Date(b.date))
-            .map(e => [
-                e.date,
-                e.category,
-                e.vendor || '',
-                e.amount,
-                e.memo || ''
-            ]);
+            .map(e => {
+                // 日付を YYYY/MM/DD 形式に変換
+                const dateParts = e.date.split('-');
+                const formattedDate = dateParts.length === 3
+                    ? `${dateParts[0]}/${dateParts[1]}/${dateParts[2]}`
+                    : e.date;
+
+                // 摘要: カテゴリ + 店舗名 + メモ
+                const description = [
+                    e.category,
+                    e.vendor,
+                    e.memo
+                ].filter(x => x).join(' / ');
+
+                return [
+                    formattedDate,  // 日付
+                    '',             // 入金（経費なので空）
+                    e.amount,       // 出金
+                    description     // 摘要
+                ];
+            });
 
         // Add BOM for Excel compatibility
         let csvContent = '\uFEFF';
@@ -554,11 +571,11 @@ class ReceiptManager {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `経費一覧_${new Date().toISOString().split('T')[0]}.csv`;
+        link.download = `やよい取込用_経費_${new Date().toISOString().split('T')[0]}.csv`;
         link.click();
         URL.revokeObjectURL(url);
 
-        this.showToast('CSVをダウンロードしました！', 'success');
+        this.showToast('やよい形式CSVをダウンロードしました！', 'success');
     }
 
     // JSON export for device sync

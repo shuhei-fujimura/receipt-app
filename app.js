@@ -199,72 +199,144 @@ class ReceiptManager {
         }
 
         // ==========================================
-        // 2. 金額の抽出 (Amount Extraction)
+        // 2. 金額の抽出 (Amount Extraction) - 改善版
         // ==========================================
-        // 戦略: 「合計」などのキーワードがある行、またはその直後の行にある金額を最優先する
-        // 単に最大の数字を取ると「お預り」や「会員番号」を取ってしまうため
+        // 戦略:
+        // 1. 「合計」などのキーワードの同一行にある数字を最優先
+        // 2. ポイントなどを除外
+        // 3. ¥マークや円がなくても、合計行の数字を認識
 
         let foundAmount = null;
+        let amountConfidence = 0; // 信頼度スコア
 
-        // 金額抽出用正規表現（カンマ付き数字）
+        // 金額抽出用正規表現（カンマ付き・カンマなし両対応、スペース許容）
         const extractPrice = (str) => {
-            const match = str.match(/([0-9]{1,3}(?:,[0-9]{3})*)/);
-            return match ? parseInt(match[1].replace(/,/g, '')) : null;
+            // OCRエラー補正: O→0, l/I→1, S→5, B→8
+            let corrected = str
+                .replace(/[OＯ]/g, '0')
+                .replace(/[lIｌＩ]/g, '1')
+                .replace(/[SＳ]/g, '5')
+                .replace(/[BＢ]/g, '8');
+
+            // スペースで分断された数字を結合（例: "1 , 5 0 0" → "1,500"）
+            corrected = corrected.replace(/(\d)\s+,\s+/g, '$1,').replace(/,\s+(\d)/g, ',$1');
+            corrected = corrected.replace(/(\d)\s+(\d)/g, '$1$2');
+
+            // カンマ付き数字 (例: 1,500 or 12,345)
+            let match = corrected.match(/([0-9]{1,3}(?:,[0-9]{3})+)/);
+            if (match) return parseInt(match[1].replace(/,/g, ''));
+
+            // カンマなし数字 (例: 1500) - 3桁以上の数字
+            match = corrected.match(/([0-9]{3,7})/);
+            if (match) return parseInt(match[1]);
+
+            return null;
+        };
+
+        // 同一行から「キーワード直後の数字」を抽出（最優先）
+        const extractPriceAfterKeyword = (str, keyword) => {
+            // OCRエラー補正
+            let corrected = str
+                .replace(/[OＯ]/g, '0')
+                .replace(/[lIｌＩ]/g, '1')
+                .replace(/[SＳ]/g, '5')
+                .replace(/[BＢ]/g, '8');
+            corrected = corrected.replace(/(\d)\s+,\s+/g, '$1,').replace(/,\s+(\d)/g, ',$1');
+            corrected = corrected.replace(/(\d)\s+(\d)/g, '$1$2');
+
+            // キーワード以降の部分を取得
+            const keywordMatch = corrected.match(keyword);
+            if (!keywordMatch) return null;
+
+            const afterKeyword = corrected.substring(keywordMatch.index + keywordMatch[0].length);
+
+            // キーワード直後の数字を探す（¥マーク有無両対応）
+            let match = afterKeyword.match(/[¥￥]?\s*([0-9]{1,3}(?:,[0-9]{3})+)/);
+            if (match) return parseInt(match[1].replace(/,/g, ''));
+
+            match = afterKeyword.match(/[¥￥]?\s*([0-9]{3,7})/);
+            if (match) return parseInt(match[1]);
+
+            return null;
         };
 
         // 優先キーワード（上から順に優先度が高い）
         const totalKeywords = [
-            /合\s*計/i,
-            /小\s*計/i, // 税抜の場合もあるが、合計がない場合は小計を採用
-            /お\s*支\s*払\s*い/i,
-            /領\s*収/i,
-            /請\s*求/i,
-            /融\s*資/i, // 消費税等の行を除外するためのガードが必要だが、まずはポジティブワード
-            /Total/i
+            { regex: /合\s*計\s*金\s*額/i, priority: 11, name: '合計金額' },
+            { regex: /合\s*計\s*[（(]?\s*税\s*込?\s*[)）]?/i, priority: 10, name: '合計(税込)' },
+            { regex: /お\s*支\s*払\s*い?\s*[額金]?/i, priority: 9, name: 'お支払い' },
+            { regex: /ご\s*請\s*求\s*[額金]?/i, priority: 9, name: 'ご請求' },
+            { regex: /合\s*計/i, priority: 8, name: '合計' },
+            { regex: /計\s*[：:]/i, priority: 7, name: '計:' },
+            { regex: /小\s*計/i, priority: 5, name: '小計' },
+            { regex: /Total/i, priority: 6, name: 'Total' }
         ];
 
         // 除外キーワード（これらを含む行の数字は合計ではない可能性が高い）
         const excludeKeywords = [
+            /ポ\s*イ\s*ン\s*ト/i,  // ポイント
+            /Pt/i,
             /お\s*預\s*り/i,
             /お\s*釣\s*り/i,
             /釣\s*銭/i,
-            /対\s*象/i, // 税対象額
-            /税/i,      // 消費税額
-            /値\s*引/i  // 値引き額
+            /対\s*象/i,      // 税対象額
+            /消\s*費\s*税/i, // 消費税額（「税込」はOK）
+            /内\s*税/i,
+            /外\s*税/i,
+            /値\s*引/i,      // 値引き額
+            /割\s*引/i,
+            /クーポン/i,
+            /会\s*員\s*番\s*号/i,
+            /電\s*話/i,
+            /TEL/i,
+            /No\./i,
+            /番\s*号/i
         ];
 
-        // 行ごとのスキャン
+        // 行ごとのスキャン（優先度ベース）
+        let candidates = [];
+
         for (let i = 0; i < lines.length; i++) {
             const line = toHalfWidth(lines[i]);
 
             // 除外キーワードが含まれていたらスキップ
             if (excludeKeywords.some(k => k.test(line))) continue;
 
-            // 合計キーワードが含まれているか確認
-            if (totalKeywords.some(k => k.test(line))) {
-                // 1. 同じ行に金額があるか？
-                let amount = extractPrice(line);
+            // 各優先キーワードをチェック
+            for (const { regex, priority, name } of totalKeywords) {
+                if (regex.test(line)) {
+                    // 1. 同じ行でキーワード直後の数字を探す（最優先）
+                    let amount = extractPriceAfterKeyword(line, regex);
 
-                // 2. なければ次の行を見る（よくあるパターン：合計 [改行] ¥1,000）
-                if (!amount && i + 1 < lines.length) {
-                    const nextLine = toHalfWidth(lines[i + 1]);
-                    // 次の行が除外キーワードを含まない場合のみ
-                    if (!excludeKeywords.some(k => k.test(nextLine))) {
-                        amount = extractPrice(nextLine);
+                    // 2. 同じ行に金額がない場合、行全体から探す
+                    if (!amount) {
+                        amount = extractPrice(line);
                     }
-                }
 
-                if (amount && amount > 0) {
-                    // 既存の候補より大きければ採用（小計より合計の方が大きいため）
-                    // ただし、あまりに巨大な数字（電話番号など）は除外
-                    if (!foundAmount || (amount > foundAmount && amount < 10000000)) {
-                        foundAmount = amount;
+                    // 3. それでもなければ次の行を見る
+                    if (!amount && i + 1 < lines.length) {
+                        const nextLine = toHalfWidth(lines[i + 1]);
+                        if (!excludeKeywords.some(k => k.test(nextLine))) {
+                            amount = extractPrice(nextLine);
+                        }
+                    }
+
+                    if (amount && amount > 0 && amount < 10000000) {
+                        candidates.push({ amount, priority, name, line: i });
+                        console.log(`Found candidate: ${name} = ${amount} (priority: ${priority})`);
                     }
                 }
             }
         }
 
-        // キーワードで見つからなかった場合、¥マークや「円」のついている最大値を探す（フォールバック）
+        // 最も優先度の高い候補を採用
+        if (candidates.length > 0) {
+            candidates.sort((a, b) => b.priority - a.priority);
+            foundAmount = candidates[0].amount;
+            console.log(`Selected amount: ${foundAmount} from "${candidates[0].name}"`);
+        }
+
+        // キーワードで見つからなかった場合、¥マークや「円」のついている数字を探す（フォールバック）
         if (!foundAmount) {
             const pricePatterns = [
                 /[¥￥]\s*([0-9,]+)/g,
@@ -276,36 +348,75 @@ class ReceiptManager {
                 const matches = normalizedText.matchAll(pattern);
                 for (const m of matches) {
                     const val = parseInt(m[1].replace(/,/g, ''));
-                    if (val > maxVal && val < 10000000) {
+                    // 除外: 電話番号っぽい数字（10桁以上）やポイントの可能性がある行
+                    if (val > maxVal && val < 10000000 && val > 10) {
                         maxVal = val;
                     }
                 }
             }
-            if (maxVal > 0) foundAmount = maxVal;
+            if (maxVal > 0) {
+                foundAmount = maxVal;
+                console.log(`Fallback amount (¥/円 marker): ${foundAmount}`);
+            }
+        }
+
+        // それでも見つからない場合、合理的な範囲の最大数字を探す（最終フォールバック）
+        if (!foundAmount) {
+            let maxVal = 0;
+            for (let i = 0; i < lines.length; i++) {
+                const line = toHalfWidth(lines[i]);
+                // 除外キーワードをスキップ
+                if (excludeKeywords.some(k => k.test(line))) continue;
+
+                const amount = extractPrice(line);
+                if (amount && amount > maxVal && amount < 1000000 && amount >= 100) {
+                    maxVal = amount;
+                }
+            }
+            if (maxVal > 0) {
+                foundAmount = maxVal;
+                console.log(`Last resort amount: ${foundAmount}`);
+            }
         }
 
         if (foundAmount) {
             data.amount = foundAmount;
-            console.log('Extracted amount:', foundAmount);
+            console.log('Final extracted amount:', foundAmount);
         }
 
         // ==========================================
         // 3. 店舗名の抽出 (Vendor Extraction)
         // ==========================================
         // 最初の数行から、電話番号や日付っぽくない行を探す
-        if (lines.length > 0) {
-            for (let i = 0; i < Math.min(5, lines.length); i++) {
-                const line = lines[i].trim();
-                // 数字だけの行、短い行、日付っぽい行を除外
-                if (line.length > 2 &&
-                    !/^\d+$/.test(line) &&
-                    !/^[0-9\-\/\.\s]+$/.test(line) &&
-                    !line.includes('レシート') &&
-                    !line.includes('領収')) {
+        // 除外するキーワード
+        const vendorExcludePatterns = [
+            /^\d+$/,                    // 数字だけ
+            /^[0-9\-\/\.\s:：]+$/,      // 日付っぽい
+            /レシート/i,
+            /領\s*収/i,
+            /伝\s*票/i,                 // 伝票番号
+            /番\s*号/i,
+            /No\./i,
+            /日\s*付/i,
+            /^\s*様\s*$/,               // 「様」だけの行
+            /合\s*計/i,
+            /金\s*額/i,
+            /税/i
+        ];
 
-                    data.vendor = line.substring(0, 50);
-                    break;
-                }
+        if (lines.length > 0) {
+            for (let i = 0; i < Math.min(8, lines.length); i++) {
+                const line = lines[i].trim();
+                // 短い行を除外
+                if (line.length <= 2) continue;
+
+                // 除外パターンにマッチしたらスキップ
+                if (vendorExcludePatterns.some(p => p.test(line))) continue;
+
+                // 店舗名として採用
+                data.vendor = line.substring(0, 50);
+                console.log('Extracted vendor:', data.vendor);
+                break;
             }
         }
 

@@ -136,35 +136,76 @@ class ReceiptManager {
     extractDataFromText(text) {
         const data = {};
 
-        // Extract date patterns: YYYY/MM/DD, YYYY-MM-DD, YYYY年MM月DD日, etc.
+        console.log('OCR Text for parsing:', text); // デバッグ用
+
+        // テキストを正規化（全角数字を半角に変換）
+        const normalizedText = text
+            .replace(/０/g, '0').replace(/１/g, '1').replace(/２/g, '2')
+            .replace(/３/g, '3').replace(/４/g, '4').replace(/５/g, '5')
+            .replace(/６/g, '6').replace(/７/g, '7').replace(/８/g, '8')
+            .replace(/９/g, '9');
+
+        // Extract date patterns: 様々な日付形式に対応
         const datePatterns = [
-            /(\d{4})[\/\-年](\d{1,2})[\/\-月](\d{1,2})/,
-            /令和(\d{1,2})年(\d{1,2})月(\d{1,2})日/,
-            /R(\d{1,2})\.(\d{1,2})\.(\d{1,2})/,
-            /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/
+            // 2024年12月10日, 2024年12月10日
+            { regex: /(\d{4})年(\d{1,2})月(\d{1,2})日?/, type: 'ymd' },
+            // 2024/12/10, 2024-12-10
+            { regex: /(\d{4})[\/\-\.年](\d{1,2})[\/\-\.月](\d{1,2})/, type: 'ymd' },
+            // 令和6年12月10日, 令和06年12月10日
+            { regex: /令和(\d{1,2})年(\d{1,2})月(\d{1,2})日?/, type: 'reiwa' },
+            // R6.12.10, R06.12.10, R6/12/10
+            { regex: /R(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{1,2})/, type: 'reiwa' },
+            // 24/12/10 (年が2桁の場合)
+            { regex: /(\d{2})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/, type: 'short_year' },
+            // 12/10/2024 (月/日/年形式)
+            { regex: /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/, type: 'mdy' },
+            // 12月10日 (年なし - 今年と仮定)
+            { regex: /(\d{1,2})月(\d{1,2})日/, type: 'md_only' }
         ];
 
-        for (const pattern of datePatterns) {
-            const match = text.match(pattern);
+        for (const { regex, type } of datePatterns) {
+            const match = normalizedText.match(regex);
             if (match) {
                 let year, month, day;
-                if (pattern.toString().includes('令和') || pattern.toString().includes('R')) {
-                    // 令和年を西暦に変換
-                    year = 2018 + parseInt(match[1]);
-                    month = match[2];
-                    day = match[3];
-                } else if (match[3] && match[3].length <= 2) {
-                    // MM/DD/YY format
-                    month = match[1];
-                    day = match[2];
-                    year = parseInt(match[3]) > 50 ? 1900 + parseInt(match[3]) : 2000 + parseInt(match[3]);
-                } else {
-                    year = match[1];
-                    month = match[2];
-                    day = match[3];
+
+                switch (type) {
+                    case 'ymd':
+                        year = parseInt(match[1]);
+                        month = parseInt(match[2]);
+                        day = parseInt(match[3]);
+                        break;
+                    case 'reiwa':
+                        // 令和年を西暦に変換（令和1年=2019年）
+                        year = 2018 + parseInt(match[1]);
+                        month = parseInt(match[2]);
+                        day = parseInt(match[3]);
+                        break;
+                    case 'short_year':
+                        // 2桁の年を4桁に変換
+                        const shortYear = parseInt(match[1]);
+                        year = shortYear >= 50 ? 1900 + shortYear : 2000 + shortYear;
+                        month = parseInt(match[2]);
+                        day = parseInt(match[3]);
+                        break;
+                    case 'mdy':
+                        month = parseInt(match[1]);
+                        day = parseInt(match[2]);
+                        year = parseInt(match[3]);
+                        break;
+                    case 'md_only':
+                        // 年がない場合は今年と仮定
+                        year = new Date().getFullYear();
+                        month = parseInt(match[1]);
+                        day = parseInt(match[2]);
+                        break;
                 }
-                data.date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                break;
+
+                // 日付の妥当性チェック
+                if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && year >= 2000 && year <= 2100) {
+                    data.date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    console.log('Extracted date:', data.date);
+                    break;
+                }
             }
         }
 
